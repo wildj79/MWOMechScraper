@@ -77,7 +77,7 @@ def gather_login_creds(output_box):
             player_email = email_entry.get()
             player_password = password_entry.get()
             if not player_email or not player_password:
-                tk.messagebox.showerror("Error", "Please enter both email and password.")
+                messagebox.showerror("Error", "Please enter both email and password.")
                 return
             dialog.destroy()
 
@@ -747,7 +747,7 @@ def get_file_path_html(output_box):
     # Ask the user to select a file
     update_output(output_box, "Gathering file path to the HTML file from user.\n")
 
-    file_path = tk.filedialog.askopenfilename(initialdir=os.path.expanduser('~'), title="Select HTML File",
+    file_path = filedialog.askopenfilename(initialdir=os.path.expanduser('~'), title="Select HTML File",
                                               filetypes=[("HTML Files", "*.html")])
     # Check if the user selected a file
     if file_path:
