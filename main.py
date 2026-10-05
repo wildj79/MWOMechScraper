@@ -1,4 +1,7 @@
 # Imports
+import truststore
+truststore.inject_into_ssl()
+
 import json
 import os
 import re
@@ -152,10 +155,15 @@ def player_owned_mechs_info(session, user_ign, output_box):
     update_output(output_box, "Parsing the JSON and gathering all owned 'Mechs Variants and associated mechIDs.\n")
     for collection_data in collection:
         variants_data = collection_data['variants']
-        for specific_variant_id in variants_data:
-            if variants_data[specific_variant_id]['owned'] is True:
-
-                list_owned_mechs.append({specific_variant_id: variants_data[specific_variant_id]})
+        for specific_variant_id, variant_data in variants_data.items():
+            if variant_data['owned']:
+                for mech_id in variant_data['mech_ids']:
+                    list_owned_mechs.append({
+                        'mech_id': mech_id,
+                        'variant_id': specific_variant_id,
+                        'name': variant_data['name'],
+                        'display_name': variant_data['display_name']
+                    })
 
     update_output(output_box, "Finished parsing and gathering all owned 'Mech Variants and their associated mechIDs.\n")
 
@@ -169,39 +177,40 @@ def player_owned_mechs_info(session, user_ign, output_box):
 
     # also grab chassis data from the MechDB API - we have to lie about the user agent; or we'll get blocked
     mech_data = mech_db_helper(output_box)
+    
+    # Get all mech IDs for stats query
+    mech_ids = [mech['mech_id'] for mech in list_owned_mechs]
+    
+    # Build URL for a batched query for all mech IDs
+    spec_mech_url = collection_data_url + "/stats?" + "&".join("mid[]=" + mid for mid in mech_ids)
+    response_spec_mech = session.get(spec_mech_url)
+    
+    dict_spec_mech = json.loads(response_spec_mech.text)
 
-    for _id in list_owned_mechs:
+    # Iterate over each mech in the stats response
+    # NOTE: This is a very naive way to match mechs by index, assumes the order returned by the API
+    # is the same as the order in list_owned_mechs
+    for i, mech_chassis in enumerate(dict_spec_mech['mechs']):
+        mechlab_mech_name = mech_chassis['name']
+        spec_mech_skills = mech_chassis['skills']['NumEquippedSkillNodes']
+        mech_tonnage = "--"
+        mech_faction = "--"
+        mech_class = "--"
+        if mech_data != "":
+            for mech_info in mech_data["data"]:
+                # Check that mechdb 'name' for the mech matches the 'name' found in the JSON retrieved from the website.
+                #if re.sub(r'[-()]', '', mech_info['name']).lower() == re.sub(r'[-()]', '', index.get('name')).lower():
+                if mech_info['id'] == list_owned_mechs[i]['variant_id']:
 
-        for mech_id, spec_mech_info in _id.items():
-            # We now have access to each individual 'mechs mechID.
-            spec_mech_ids = spec_mech_info['mech_ids']
-            for ind_mech_id in spec_mech_ids:
-                # ------------- Individual mech's skill point scraper ---------------
-                # Create url of the specific 'Mech we want the information of.
-                spec_mech_url = collection_data_url + "/stats?mid[]=" + ind_mech_id
-                response_spec_mech = session.get(spec_mech_url)
-                dict_spec_mech = json.loads(response_spec_mech.text)
-
-                for mech_chassis in dict_spec_mech['mechs']:
-                    mechlab_mech_name = mech_chassis['name']
-                    spec_mech_skills = mech_chassis['skills']['NumEquippedSkillNodes']
-                    mech_tonnage = "--"
-                    mech_faction = "--"
-                    mech_class = "--"
-                    if mech_data != "":
-                        for mech_info in mech_data["data"]:
-                            # Check that mechdb 'name' for the mech matches the 'name' found in the JSON retrieved from the website.
-                            #if re.sub(r'[-()]', '', mech_info['name']).lower() == re.sub(r'[-()]', '', index.get('name')).lower():
-                            if mech_info['id'] == mech_id:
-
-                                mech_tonnage = mech_info['tonnage']
-                                mech_faction = mech_info['faction']
-                                mech_class = mech_info['class']
-                                break
-                    # Using regex to remove special variant tags from mechs to be used as a "base" 'Mech for easier
-                    # crafting of look-up tables.
-                    list_mech_chass_name_sp.append((re.sub("[(].*?[)]", "", spec_mech_info.get('display_name')), spec_mech_info.get('display_name'), mechlab_mech_name, mech_tonnage,
-                                                    mech_faction, mech_class, spec_mech_skills))
+                    mech_tonnage = mech_info['tonnage']
+                    mech_faction = mech_info['faction']
+                    mech_class = mech_info['class']
+                    break
+        # Using regex to remove special variant tags from mechs to be used as a "base" 'Mech for easier
+        # crafting of look-up tables.
+        list_mech_chass_name_sp.append((re.sub("[(].*?[)]", "", list_owned_mechs[i]['display_name']), list_owned_mechs[i]['display_name'], mechlab_mech_name, mech_tonnage,
+                                        mech_faction, mech_class, spec_mech_skills))
+    
     update_output(output_box, "Finished gathering information about player's owned 'Mechs.\n")
 
     # Convert list of tuples (mech base variant, actual variant, name, tonnage, faction, weight class, equipped skill
@@ -214,7 +223,7 @@ def player_owned_mechs_info(session, user_ign, output_box):
 
     # Convert dataframe to csv file.
     update_output(output_box, "Converting (Base, Variant, User Defined Name, Tonnage, Faction, Weight Class, "
-                              "Skill Points) dataframe to .csv format for users viewing.\n")
+                             "Skill Points) dataframe to .csv format for users viewing.\n")
     df_list_mech_name_sp.to_csv(cwd + os.sep + user_ign + "_" + 'owned_mechs.csv', index=False)
 
 
@@ -429,8 +438,9 @@ def sorted_mech_stats_tp(user, output_box):
         all_hms.append(int(hms))
 
     # Change the Time Played Strings to the integers
-    for z in (range(len(all_hms))):
-        sorted_time_played.loc[sorted_time_played.index[z], 'Time Played'] = all_hms[z]
+    #for z in (range(len(all_hms))):
+    #    sorted_time_played.loc[sorted_time_played.index[z], 'Time Played'] = all_hms[z]
+    sorted_time_played['Time Played'] = pd.to_numeric(all_hms)
 
     # Sort the Time Played column by the integer values in descending order
     update_output(output_box, "Sorting by Time Played entries of 'Mechs.\n")
@@ -467,8 +477,9 @@ def sorted_mech_stats_tp(user, output_box):
 
     # Change the Time Played Integers to the Strings we just built.
     update_output(output_box, "Storing the easier-to-read to the Time Played column of the dataframe.\n")
-    for b in range(len(mutated_times)):
-        sorted_time_played.loc[sorted_time_played.index[b], 'Time Played'] = mutated_times[b]
+    #for b in range(len(mutated_times)):
+    #    sorted_time_played.loc[sorted_time_played.index[b], 'Time Played'] = mutated_times[b]
+    sorted_time_played['Time Played'] = mutated_times
     update_output(output_box, "Finished storing the easier-to-read entries to the Time Played "
                               "column of the dataframe.\n")
 
