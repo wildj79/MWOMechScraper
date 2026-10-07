@@ -133,6 +133,47 @@ def mech_db_helper(output_box):
         update_output(output_box, "Unable to load extra data from MechDB. Continuing.\n")
         return ""
 
+def generate_mech_list(output_box: tk.Text):
+    """Generate a list of mechs from mechDB."""
+    mech_data = mech_db_helper(output_box)
+    if mech_data == "":
+        return
+    
+    mech_list = []
+    
+    update_output(output_box, "Generating mech list...\n")
+    for mech in mech_data['data']:
+        full_name = ""
+        is_hero = mech['type'] == 'hero'
+        is_special = mech['type'] == 'special'
+        is_legendary = str.find(mech['name'], 'lgd') != -1
+        is_champion = mech['type'] == 'champion'
+        
+        if is_hero or is_legendary:
+            full_name = str.upper(mech['display_name'])
+        else:
+            full_name = str.upper(mech['chassis']) + " " + str.upper(mech['display_name'])
+        
+        chassis = str.title(mech['chassis'])
+        weight_class = str.capitalize(mech['class'])
+        tonnage = int(mech['tonnage'])
+        faction = str.replace(mech['faction'], "_", " ").title()
+        
+        mech_list.append((
+            full_name, 
+            chassis, 
+            weight_class,
+            tonnage,
+            faction,
+            is_hero,
+            is_special,
+            is_legendary,
+            is_champion
+        ))
+    
+    update_output(output_box, "Mech list generated. Saving to CSV file.\n")
+    mech_list_csv = pd.DataFrame(mech_list, columns=['Name', 'Chassis', 'Weight Class', 'Tonnage', 'Faction', 'Is Hero', 'Is Special', 'Is Legendary', 'Is Champion'])
+    mech_list_csv.to_csv(cwd + os.sep + 'mech_list.csv', index=False)
 
 # A function for gathering information about the user's owned 'Mechs (Online).
 def player_owned_mechs_info(session, user_ign, output_box):
@@ -177,6 +218,13 @@ def player_owned_mechs_info(session, user_ign, output_box):
 
     # also grab chassis data from the MechDB API - we have to lie about the user agent; or we'll get blocked
     mech_data = mech_db_helper(output_box)
+    mech_data_lookup = {}
+    
+    if mech_data != "":
+        mech_data_lookup = {
+            mech['id']: mech
+            for mech in mech_data["data"]
+        }
     
     # Get all mech IDs for stats query
     mech_ids = [mech['mech_id'] for mech in list_owned_mechs]
@@ -196,29 +244,30 @@ def player_owned_mechs_info(session, user_ign, output_box):
         mech_tonnage = "--"
         mech_faction = "--"
         mech_class = "--"
+        mech_chassis = "--"
         if mech_data != "":
-            for mech_info in mech_data["data"]:
+            mech_info = mech_data_lookup.get(list_owned_mechs[i]['variant_id'])
+            if mech_info:
                 # Check that mechdb 'name' for the mech matches the 'name' found in the JSON retrieved from the website.
                 #if re.sub(r'[-()]', '', mech_info['name']).lower() == re.sub(r'[-()]', '', index.get('name')).lower():
-                if mech_info['id'] == list_owned_mechs[i]['variant_id']:
-
-                    mech_tonnage = mech_info['tonnage']
-                    mech_faction = mech_info['faction']
-                    mech_class = mech_info['class']
-                    break
+                mech_tonnage = int(mech_info['tonnage'])
+                mech_faction = str.replace(mech_info['faction'], "_", " ").title()
+                mech_class = str.capitalize(mech_info['class'])
+                mech_chassis = str.title(mech_info['chassis'])
+                
         # Using regex to remove special variant tags from mechs to be used as a "base" 'Mech for easier
         # crafting of look-up tables.
-        list_mech_chass_name_sp.append((re.sub("[(].*?[)]", "", list_owned_mechs[i]['display_name']), list_owned_mechs[i]['display_name'], mechlab_mech_name, mech_tonnage,
+        list_mech_chass_name_sp.append((mech_chassis, re.sub("[(].*?[)]", "", list_owned_mechs[i]['display_name']), list_owned_mechs[i]['display_name'], mechlab_mech_name, mech_tonnage,
                                         mech_faction, mech_class, spec_mech_skills))
     
     update_output(output_box, "Finished gathering information about player's owned 'Mechs.\n")
 
     # Convert list of tuples (mech base variant, actual variant, name, tonnage, faction, weight class, equipped skill
     # points) into a dataframe.
-    update_output(output_box, "Converting list of tuples (Base, Variant, User Defined Name, Tonnage, Faction, "
+    update_output(output_box, "Converting list of tuples (Chassis, Base, Variant, User Defined Name, Tonnage, Faction, "
                               "Weight Class, Skill Points) to dataframe.\n")
     df_list_mech_name_sp = pd.DataFrame(list_mech_chass_name_sp,
-                                        columns=['Base', 'Variant', 'Name', 'Tonnage', 'Faction', 'Class',
+                                        columns=['Chassis', 'Base', 'Variant', 'Name', 'Tonnage', 'Faction', 'Class',
                                                  'Skill Points'])
 
     # Convert dataframe to csv file.
@@ -888,10 +937,12 @@ def main():
                                    command=lambda: run_online_stat_scraper(output_box), padx=10, pady=10)
     online_mech_button = tk.Button(online_frame, text="Online Mech Scraper", font=("Arial", 12),
                                    command=lambda: run_online_mech_scraper(output_box), padx=10, pady=10)
+    mech_list = tk.Button(online_frame, text="Mech List", font=("Arial", 12), command=lambda: generate_mech_list(output_box), padx=10, pady=10)
 
     # add the online buttons to the frame
     online_stat_button.pack(side="left", padx=10)
     online_mech_button.pack(side="right", padx=10)
+    mech_list.pack(side="left", padx=10)
 
     # create a frame for the offline buttons
     offline_frame = tk.Frame(root)
